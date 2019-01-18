@@ -1,0 +1,79 @@
+Parameters:
+  BuildPhase:
+    Type: Number
+    Default: 1
+    AllowedValues:
+      - 1
+      - 2
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: General Configuration
+        Parameters:
+          - BuildPhase
+    ParameterLabels:
+      BuildPhase:
+        default: Select Build Phase (1-2)
+
+Conditions:
+  IsPhase1: !Or [ !Equals [ !Ref BuildPhase, 1 ], !Equals [ !Ref BuildPhase, 2 ] ]
+  IsPhase2: !Equals [ !Ref BuildPhase, 2 ]
+
+Resources:
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  NotificationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: my-bucket-notification
+      Handler: index.handler
+      Code:
+        ZipFile: >
+          exports.handler = event => {
+            console.log("Event triggered:", event);
+            console.log("My environment variable:", process.env.MY_ENVIRONMENT_VARIABLE);
+          };
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: nodejs8.10
+      Environment:
+        Variables:
+          MY_ENVIRONMENT_VARIABLE: Hello there!
+
+  MyBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      BucketName: my-bucket-4bfff4e6-be72-4bb7-9b0f-8c110b8a8c4e
+      NotificationConfiguration:
+        LambdaConfigurations:
+          Fn::If:
+            - IsPhase2
+            - - Event: s3:ObjectCreated:Put
+                Filter:
+                  S3Key:
+                    Rules:
+                      - Name: prefix
+                        Value: pic-
+                Function: !GetAtt NotificationLambda.Arn
+            - !Ref AWS::NoValue

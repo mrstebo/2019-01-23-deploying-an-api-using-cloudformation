@@ -1,0 +1,33 @@
+Properties:
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  MyLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: my-lambda
+      Handler: index.handler
+      Code:
+        ZipFile: >
+          exports.handler = event => {
+            console.log("Event triggered:", event);
+            console.log("My environment variable:", process.env.MY_ENVIRONMENT_VARIABLE);
+          };
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: nodejs8.10
+      Environment:
+        Variables:
+          MY_ENVIRONMENT_VARIABLE: Hello there!
