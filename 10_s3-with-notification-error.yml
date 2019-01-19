@@ -32,6 +32,14 @@ Resources:
         Variables:
           MY_ENVIRONMENT_VARIABLE: Hello there!
 
+  NotificationLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref NotificationLambda
+      Action: lambda:InvokeFunction
+      SourceArn: !GetAtt MyBucket.Arn
+      Principal: s3.amazonaws.com
+
   MyBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Delete
