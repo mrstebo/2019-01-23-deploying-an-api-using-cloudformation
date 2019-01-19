@@ -1,0 +1,95 @@
+swagger: '2.0'
+info:
+  description: A simple voting API
+  version: 1.0.0
+  title: My Voting API
+  contact:
+    email: steve.atkinson@dootrix.com
+externalDocs:
+  description: Github Repository
+  url: 'https://github.com/mrstebo/2018-01-23-deploying-an-api-using-cloudformation'
+schemes:
+  - https
+securityDefinitions:
+  apiKeyAuthorization:
+    type: apiKey
+    in: header
+    name: x-api-key
+paths:
+  '/questions':
+    get:
+      summary: Get a list of questions
+      description: >
+        Returns a list of available questions that can be voted on
+      operationId: getQuestions
+      security:
+        - apiKeyAuthorization: []
+      produces:
+        - application/json
+      responses:
+        '200':
+          description: Questions have been returned
+          schema:
+            $ref: '#/definitions/GetQuestionsSuccess'
+        '403':
+          description: Invalid API key
+          schema:
+            $ref: '#/definitions/Empty'
+  '/questions/{question_id}/votes':
+    post:
+      summary: Create a new vote for a question
+      description: >
+        Add a vote for a specific question
+      operationId: postVote
+      security:
+        - apiKeyAuthorization: []
+      produces:
+        - application/json
+      parameters:
+        - name: question_id
+          in: path
+          description: Question ID
+          required: true
+          type: string
+      responses:
+        '201':
+          description: The vote has been added
+          schema:
+            $ref: '#/definitions/Empty'
+        '403':
+          description: Invalid API key
+          schema:
+            $ref: '#/definitions/Empty'
+definitions:
+  Empty:
+    type: object
+    title: Empty Schema
+  GetQuestionsSuccess:
+    type: object
+    required:
+      - data
+    properties:
+      data:
+        type: array
+        items:
+          $ref: '#/definitions/QuestionItem'
+  QuestionItem:
+    type: object
+    required:
+      - title
+      - votes
+    properties:
+      title:
+        type: string
+      votes:
+        type: object
+        required:
+          - up
+          - down
+        properties:
+          up:
+            type: number
+            format: int32
+          down:
+            type: number
+            format: int32
