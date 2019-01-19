@@ -1,0 +1,344 @@
+Resources:
+  # QuestionsTable:
+  #   Type: AWS::DynamoDB::Table
+  #   Properties:
+  #     AttributeDefinitions:
+  #       - AttributeName: Title
+  #         AttributeType: 'S'
+  #     KeySchema:
+  #       - AttributeName: Title
+  #         KeyType: RANGE
+  #     ProvisionedThroughput:
+  #       ReadCapacityUnits: 2
+  #       WriteCapacityUnits: 2
+  #     SSESpecification:
+  #       SSEEnabled: true
+
+  # PopulateQuestions:
+  #   Type: AWS::Lambda::Function
+  #   Properties:
+  #     FunctionName: !Sub ${AWS::StackName}-PopulateQuestions
+  #     Handler: index.handler
+  #     Code:
+  #       ZipFile: >
+  #         const AWS = require('aws-sdk');
+  #         const DynamoDB = AWS.DynamoDB();
+
+  # PopulateQuestionsRunner:
+  #   Type: Custom::PopulateQuestions
+  #   DependsOn: QuestionsTable
+  #   Properties:
+  #     ServiceToken: !GetAtt PopulateQuestions.Arn
+
+  GetQuestionsLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-GetQuestions
+      Handler: index.handler
+      Code:
+        ZipFile: >
+          const AWS = require('aws-sdk');
+
+          exports.handler = async (event, context) => {
+            return await Promise.resolve({
+              statusCode: 200,
+              body: JSON.stringify({
+                data: []
+              }),
+              headers: {
+                'Content-Type': 'application/json'
+              }
+            });
+          };
+      Runtime: nodejs8.10
+      Role: !GetAtt GetQuestionsRole.Arn
+      Timeout: 5
+
+  GetQuestionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  PostVoteLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-PostVote
+      Handler: index.handler
+      Code:
+        ZipFile: >
+          const AWS = require('aws-sdk');
+
+          exports.handler = async (event, context) => {
+            return await Promise.resolve({
+              statusCode: 201
+            });
+          };
+      Runtime: nodejs8.10
+      Role: !GetAtt PostVoteRole.Arn
+      Timeout: 5
+
+  PostVoteRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  MyApiLoggingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
+  MyApiLoggingAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt MyApiLoggingRole.Arn
+
+  MyApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub ${AWS::StackName}-api
+      Description: My API Gateway
+      FailOnWarnings: true
+      ApiKeySourceType: HEADER
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Body:
+        swagger: '2.0'
+        info:
+          description: A simple voting API
+          version: 1.0.0
+          title: My Voting API
+          contact:
+            email: steve.atkinson@dootrix.com
+        externalDocs:
+          description: Github Repository
+          url: 'https://github.com/mrstebo/2018-01-23-deploying-an-api-using-cloudformation'
+        schemes:
+          - https
+        paths:
+          '/questions':
+            get:
+              summary: Get a list of questions
+              description: >
+                Returns a list of available questions that can be voted on
+              operationId: getQuestions
+              produces:
+                - application/json
+              responses:
+                '200':
+                  description: Questions have been returned
+                  schema:
+                    $ref: '#/definitions/GetQuestionsSuccess'
+              x-amazon-apigateway-integration:
+                passthroughBehavior: when_no_templates
+                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetQuestionsLambda.Arn}/invocations
+                responses:
+                  default:
+                    statusCode: 200
+                httpMethod: POST
+                type: aws_proxy
+          '/questions/{question_id}/votes':
+            post:
+              summary: Create a new vote for a question
+              description: >
+                Add a vote for a specific question
+              operationId: postVote
+              produces:
+                - application/json
+              parameters:
+                - name: question_id
+                  in: path
+                  description: Question ID
+                  required: true
+                  type: string
+              responses:
+                '201':
+                  description: The vote has been added
+                  schema:
+                    $ref: '#/definitions/Empty'
+              x-amazon-apigateway-integration:
+                passthroughBehavior: when_no_templates
+                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PostVoteLambda.Arn}/invocations
+                responses:
+                  default:
+                    statusCode: 200
+                httpMethod: POST
+                type: aws_proxy
+        definitions:
+          Empty:
+            type: object
+            title: Empty Schema
+          GetQuestionsSuccess:
+            type: object
+            required:
+              - data
+            properties:
+              data:
+                type: array
+                items:
+                  $ref: '#/definitions/QuestionItem'
+          QuestionItem:
+            type: object
+            required:
+              - title
+              - votes
+            properties:
+              title:
+                type: string
+              votes:
+                type: object
+                required:
+                  - up
+                  - down
+                properties:
+                  up:
+                    type: number
+                    format: int32
+                  down:
+                    type: number
+                    format: int32
+
+  Default400XGatewayResponse:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref MyApiGateway
+      ResponseType: DEFAULT_4XX
+      ResponseTemplates:
+        application/json: >
+          {
+            "message": "Invalid request"
+          }
+
+  Default500XGatewayResponse:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref MyApiGateway
+      ResponseType: DEFAULT_5XX
+      StatusCode: 503
+      ResponseTemplates:
+        application/json: >
+          {
+            "message": "Service is temporarily unavailable"
+          }
+
+  AccessDeniedGatewayResponse:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref MyApiGateway
+      ResponseType: ACCESS_DENIED
+      ResponseTemplates:
+        application/json: >
+          {
+            "message": "You are not authorized to access this resource"
+          }
+
+  QuotaExceededGatewayResponse:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref MyApiGateway
+      ResponseType: QUOTA_EXCEEDED
+      ResponseTemplates:
+        application/json: >
+          {
+            "message": "You have exceeded the number of API requests for your current plan"
+          }
+
+  ResourceNotFoundGatewayResponse:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref MyApiGateway
+      ResponseType: RESOURCE_NOT_FOUND
+      ResponseTemplates:
+        application/json: >
+          {
+            "message": "Not found"
+          }
+
+  ThrottledGatewayResponse:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref MyApiGateway
+      ResponseType: THROTTLED
+      ResponseTemplates:
+        application/json: >
+          {
+            "message": "Too many requests sent. Please wait before retrying."
+          }
+
+  UnauthorizedGatewayResponse:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref MyApiGateway
+      ResponseType: UNAUTHORIZED
+      ResponseTemplates:
+        application/json: >
+          {
+            "message": "You are not authorized to access this resource"
+          }
+
+  MyApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      RestApiId: !Ref MyApiGateway
+
+  MyApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      StageName: !Sub ${AWS::StackName}-stage
+      RestApiId: !Ref MyApiGateway
+      DeploymentId: !Ref MyApiDeployment
+      MethodSettings:
+        - DataTraceEnabled: true
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          ResourcePath: /*
+          MetricsEnabled: true
+
+  GetQuestionsInvokePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: MyApiDeployment
+    Properties:
+      FunctionName: !Ref GetQuestionsLambda
+      Action: lambda:InvokeFunction
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${MyApiGateway}/${MyApiStage}/GET/questions
+      Principal: apigateway.amazonaws.com
+
+  PostVoteInvokePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: MyApiDeployment
+    Properties:
+      FunctionName: !Ref PostVoteLambda
+      Action: lambda:InvokeFunction
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${MyApiGateway}/${MyApiStage}/POST/questions/*/votes
+      Principal: apigateway.amazonaws.com
