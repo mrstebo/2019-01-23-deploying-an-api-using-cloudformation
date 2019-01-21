@@ -129,7 +129,6 @@ Resources:
       Name: !Sub ${AWS::StackName}-api
       Description: My API Gateway
       FailOnWarnings: true
-      ApiKeySourceType: HEADER
       EndpointConfiguration:
         Types:
           - REGIONAL
