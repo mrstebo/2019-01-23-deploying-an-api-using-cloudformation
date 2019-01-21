@@ -1,34 +1,110 @@
 Resources:
-  # QuestionsTable:
-  #   Type: AWS::DynamoDB::Table
-  #   Properties:
-  #     AttributeDefinitions:
-  #       - AttributeName: Title
-  #         AttributeType: 'S'
-  #     KeySchema:
-  #       - AttributeName: Title
-  #         KeyType: RANGE
-  #     ProvisionedThroughput:
-  #       ReadCapacityUnits: 2
-  #       WriteCapacityUnits: 2
-  #     SSESpecification:
-  #       SSEEnabled: true
+  QuestionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: Title
+          AttributeType: S
+      KeySchema:
+        - AttributeName: Title
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+      SSESpecification:
+        SSEEnabled: true
 
-  # PopulateQuestions:
-  #   Type: AWS::Lambda::Function
-  #   Properties:
-  #     FunctionName: !Sub ${AWS::StackName}-PopulateQuestions
-  #     Handler: index.handler
-  #     Code:
-  #       ZipFile: >
-  #         const AWS = require('aws-sdk');
-  #         const DynamoDB = AWS.DynamoDB();
+  PopulateQuestionsLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-PopulateQuestions
+      Handler: index.handler
+      Code:
+        ZipFile: >
+          const AWS = require("aws-sdk");
+          const response = require("cfn-response");
+          const ddb = new AWS.DynamoDB({ apiVersion: "2012-10-08" });
 
-  # PopulateQuestionsRunner:
-  #   Type: Custom::PopulateQuestions
-  #   DependsOn: QuestionsTable
-  #   Properties:
-  #     ServiceToken: !GetAtt PopulateQuestions.Arn
+          const questions = [{
+            title: "What is your preferred Cloud provider?",
+            answers: [
+              "Azure",
+              "AWS",
+              "GCP"
+            ]
+          }, {
+            title: "What technologies do you use?",
+            answers: [
+              "Javascript",
+              ".NET",
+              "Go",
+              "Ruby",
+              "PHP"
+            ]
+          }];
+
+          exports.handler = (event, context) => {
+            console.log(JSON.stringify(event, null, 2));
+
+            const promises = questions.map(question => ddb.putItem({
+              TableName: event.ResourceProperties.TableName,
+              Item: {
+                Title: {
+                  S: question.title
+                },
+                Answers: {
+                  M: question.answers.reduce((r, v) => {
+                    r[v] = { N: "0" };
+                    return r;
+                  }, {})
+                }
+              }
+            }).promise());
+
+            return Promise.all(promises)
+              .then(() => response.send(event, context, response.SUCCESS))
+              .catch(err => response.send(event, context, response.FAILED, err));
+          };
+      Runtime: nodejs8.10
+      Role: !GetAtt PopulateQuestionsLambdaRole.Arn
+      Timeout: 30
+
+  PopulateQuestionsLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: allow_access_to_dynamodb
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource:
+                  - !GetAtt QuestionsTable.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - arn:aws:logs:*:*:*
+
+  PopulateQuestionsRunner:
+    Type: Custom::PopulateQuestions
+    Properties:
+      ServiceToken: !GetAtt PopulateQuestionsLambda.Arn
+      TableName: !Ref QuestionsTable
 
   GetQuestionsLambda:
     Type: AWS::Lambda::Function
@@ -37,22 +113,39 @@ Resources:
       Handler: index.handler
       Code:
         ZipFile: >
-          const AWS = require('aws-sdk');
+          const AWS = require("aws-sdk");
+          const ddb = new AWS.DynamoDB({ apiVersion: "2012-10-08" });
 
           exports.handler = async (event, context) => {
-            return await Promise.resolve({
+            const result = await ddb.scan({
+              TableName: process.env.TABLE_NAME,
+              ProjectionExpression: "Title, Answers"
+            }).promise();
+
+            return {
               statusCode: 200,
               body: JSON.stringify({
-                data: []
+                data: result.Items.map(item => ({
+                  title: item.Title.S,
+                  answers: Object.keys(item.Answers.M).map(answer => ({
+                    answer,
+                    votes: parseInt(item.Answers.M[answer].N)
+                  }))
+                })),
+                count: result.Count
               }),
               headers: {
                 'Content-Type': 'application/json'
               }
-            });
+            };
           };
+
       Runtime: nodejs8.10
       Role: !GetAtt GetQuestionsRole.Arn
       Timeout: 5
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref QuestionsTable
 
   GetQuestionsRole:
     Type: AWS::IAM::Role
@@ -67,6 +160,16 @@ Resources:
             Action:
               - sts:AssumeRole
       Path: /
+      Policies:
+        - PolicyName: allow_reading_from_dynamodb
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt QuestionsTable.Arn
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
