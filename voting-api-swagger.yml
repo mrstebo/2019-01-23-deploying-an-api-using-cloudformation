@@ -8,6 +8,7 @@ info:
 externalDocs:
   description: Github Repository
   url: 'https://github.com/mrstebo/2018-01-23-deploying-an-api-using-cloudformation'
+host: api.my-voting-app.com
 schemes:
   - https
 paths:
