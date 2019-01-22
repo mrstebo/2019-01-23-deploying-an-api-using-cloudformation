@@ -3,10 +3,10 @@ Resources:
     Type: AWS::DynamoDB::Table
     Properties:
       AttributeDefinitions:
-        - AttributeName: Title
+        - AttributeName: Id
           AttributeType: S
       KeySchema:
-        - AttributeName: Title
+        - AttributeName: Id
           KeyType: HASH
       ProvisionedThroughput:
         ReadCapacityUnits: 1
@@ -22,8 +22,9 @@ Resources:
       Code:
         ZipFile: >
           const AWS = require("aws-sdk");
-          const response = require("cfn-response");
           const ddb = new AWS.DynamoDB({ apiVersion: "2012-10-08" });
+          const response = require("cfn-response");
+          const uuid = require("uuid");
 
           const questions = [{
             title: "What is your preferred Cloud provider?",
@@ -46,24 +47,33 @@ Resources:
           exports.handler = (event, context) => {
             console.log(JSON.stringify(event, null, 2));
 
-            const promises = questions.map(question => ddb.putItem({
-              TableName: event.ResourceProperties.TableName,
-              Item: {
-                Title: {
-                  S: question.title
-                },
-                Answers: {
-                  M: question.answers.reduce((r, v) => {
-                    r[v] = { N: "0" };
-                    return r;
-                  }, {})
+            if (event.RequestType === "Create") {
+              return ddb.batchWriteItem({
+                RequestItems: {
+                  [event.ResourceProperties.TableName]: questions.map(question => ({
+                    PutRequest: {
+                      Item: {
+                        Id: { S: uuid.v4() },
+                        Title: { S: question.title },
+                        Answers: {
+                          M: question.answers.reduce((r, v) => {
+                            r[v] = { N: "0" };
+                            return r;
+                          }, {})
+                        }
+                      }
+                    }
+                  }))
                 }
-              }
-            }).promise());
+              }, err => {
+                if (err) {
+                  return response.send(event, context, response.FAILED, err);
+                }
+                return response.send(event, context, response.SUCCESS);
+              });
+            }
 
-            return Promise.all(promises)
-              .then(() => response.send(event, context, response.SUCCESS))
-              .catch(err => response.send(event, context, response.FAILED, err));
+            return response.send(event, context, response.SUCCESS);
           };
       Runtime: nodejs8.10
       Role: !GetAtt PopulateQuestionsLambdaRole.Arn
@@ -89,6 +99,7 @@ Resources:
             Statement:
               - Effect: Allow
                 Action:
+                  - dynamodb:BatchWriteItem
                   - dynamodb:PutItem
                 Resource:
                   - !GetAtt QuestionsTable.Arn
@@ -100,7 +111,7 @@ Resources:
                 Resource:
                   - arn:aws:logs:*:*:*
 
-  PopulateQuestionsRunner:
+  PopulateQuestions:
     Type: Custom::PopulateQuestions
     Properties:
       ServiceToken: !GetAtt PopulateQuestionsLambda.Arn
@@ -119,13 +130,14 @@ Resources:
           exports.handler = async (event, context) => {
             const result = await ddb.scan({
               TableName: process.env.TABLE_NAME,
-              ProjectionExpression: "Title, Answers"
+              ProjectionExpression: "Id, Title, Answers"
             }).promise();
 
             return {
               statusCode: 200,
               body: JSON.stringify({
                 data: result.Items.map(item => ({
+                  id: item.Id.S,
                   title: item.Title.S,
                   answers: Object.keys(item.Answers.M).map(answer => ({
                     answer,
@@ -139,7 +151,6 @@ Resources:
               }
             };
           };
-
       Runtime: nodejs8.10
       Role: !GetAtt GetQuestionsRole.Arn
       Timeout: 5
@@ -180,16 +191,37 @@ Resources:
       Handler: index.handler
       Code:
         ZipFile: >
-          const AWS = require('aws-sdk');
+          const AWS = require("aws-sdk");
+          const ddb = new AWS.DynamoDB({ apiVersion: "2012-10-08" });
 
           exports.handler = async (event, context) => {
-            return await Promise.resolve({
-              statusCode: 201
-            });
+            const questionId = event.pathParameters.question_id;
+            const body = JSON.parse(event.body);
+
+            await ddb.updateItem({
+              TableName: process.env.TABLE_NAME,
+              Key: {
+                Id: { S: questionId }
+              },
+              UpdateExpression: "SET Answers.#s = Answers.#s + :val",
+              ExpressionAttributeNames: {
+                "#s": body.answer
+              },
+              ExpressionAttributeValues: {
+                ":val": { N: "1" }
+              }
+            }).promise();
+
+            return {
+              statusCode: 204
+            };
           };
       Runtime: nodejs8.10
       Role: !GetAtt PostVoteRole.Arn
       Timeout: 5
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref QuestionsTable
 
   PostVoteRole:
     Type: AWS::IAM::Role
@@ -204,6 +236,16 @@ Resources:
             Action:
               - sts:AssumeRole
       Path: /
+      Policies:
+        - PolicyName: allow_updating_dynamodb_item
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !GetAtt QuestionsTable.Arn
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
@@ -284,8 +326,18 @@ Resources:
                   description: Question ID
                   required: true
                   type: string
+                - name: answer
+                  in: body
+                  description: The selected answer
+                  schema:
+                    type: object
+                    required:
+                      - answer
+                    properties:
+                      answer:
+                        type: string
               responses:
-                '201':
+                '204':
                   description: The vote has been added
                   schema:
                     $ref: '#/definitions/Empty'
@@ -294,7 +346,7 @@ Resources:
                 uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PostVoteLambda.Arn}/invocations
                 responses:
                   default:
-                    statusCode: 200
+                    statusCode: 204
                 httpMethod: POST
                 type: aws_proxy
         definitions:
