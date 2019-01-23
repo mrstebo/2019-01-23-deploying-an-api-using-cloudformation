@@ -39,8 +39,18 @@ paths:
           description: Question ID
           required: true
           type: string
+        - name: answer
+          in: body
+          description: The selected answer
+          schema:
+            type: object
+            required:
+              - answer
+            properties:
+              answer:
+                type: string
       responses:
-        '201':
+        '204':
           description: The vote has been added
           schema:
             $ref: '#/definitions/Empty'
@@ -60,22 +70,28 @@ definitions:
   QuestionItem:
     type: object
     required:
+      - id
       - title
-      - votes
+      - answers
     properties:
+      id:
+        type: string
       title:
         type: string
+      answers:
+        type: array
+        items:
+          $ref: '#/definitions/AnswerItem'
+  AnswerItem:
+    type: object
+    required:
+      - answer
+      - votes
+    properties:
+      answer:
+        type: string
       votes:
-        type: object
-        required:
-          - up
-          - down
-        properties:
-          up:
-            type: number
-            format: int32
-          down:
-            type: number
-            format: int32
+        type: number
+        format: int32
 
 
